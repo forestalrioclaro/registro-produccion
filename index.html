@@ -262,12 +262,14 @@ const CONFIG = {
   columnas: {
     area:     ["Área", "Area"],
     maquina:  ["Máquina", "Maquina"],
-    largo:    ["Largo"],
-    producto: ["Producto 2", "Producto Estandarizado", "Producto"],
-    unidades: ["Unidades", "Produccion Unidades"],
-    m3:       ["M3", "Producción M3", "Produccion M3"],
+    largo:    ["Largo (m)", "Largo"],
+    producto: ["Producto", "Producto 2"],
+    // Cantidad Real y Volumen Real cuentan cada pieza una sola vez
+    // (el ayudante va en 0, así no se duplica con el operador)
+    unidades: ["Cantidad Real", "Unidades"],
+    m3:       ["Volumen Real (m³)", "Volumen Real (m3)", "M3"],
     tipo:     ["Tipo"],
-    rcrd:     ["RC/RD"],
+    rcrd:     ["RD/RC", "RC/RD"],
     anio:     ["Año", "Ano"],
     mes:      ["Mes"],
     dia:      ["Día", "Dia"],
@@ -434,7 +436,8 @@ async function cargarMes() {
         area: CONFIG.nombresArea[areaOrig] || areaOrig || "(Sin área)",
         maquina: String(g("maquina") ?? "").trim() || "(Sin máquina)",
         largo: g("largo"),
-        producto: String(g("producto") ?? "").trim() || "(Sin producto)",
+        // "4 a 5 x 6,0 - RD" y "4 a 5 x 6 - RD" son el mismo producto
+        producto: String(g("producto") ?? "").trim().replace(/ x (\d+),0\b/g, " x $1") || "(Sin producto)",
         u: numero(g("unidades")),
         m3: numero(g("m3")),
         tipo: String(g("tipo") ?? "").trim() || "(Sin tipo)",
