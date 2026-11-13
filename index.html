@@ -263,9 +263,11 @@ const CONFIG = {
     area:     ["Área", "Area"],
     maquina:  ["Máquina", "Maquina"],
     largo:    ["Largo (m)", "Largo"],
-    producto: ["Producto", "Producto 2"],
+    // Tercer nivel de la tabla (igual que la hoja TD: Área > Largo > Diámetro)
+    detalle:  ["Diámetro", "Diametro"],
     // Cantidad Real y Volumen Real cuentan cada pieza una sola vez
-    // (el ayudante va en 0, así no se duplica con el operador)
+    // (el ayudante va en 0/vacío, así no se duplica con el operador).
+    // Para usar el volumen de la hoja TD, cambia a ["Volumen Total (m³)"].
     unidades: ["Cantidad Real", "Unidades"],
     m3:       ["Volumen Real (m³)", "Volumen Real (m3)", "M3"],
     tipo:     ["Tipo"],
@@ -276,8 +278,9 @@ const CONFIG = {
     fecha:    ["Fecha"]
   },
 
-  // Orden de las áreas en el reporte (las que no estén aquí van al final)
-  ordenAreas: ["Morbark", "Polineras", "Cilindrado", "Postes"],
+  // Orden de las áreas en el reporte (las que no estén aquí van al final).
+  // Vacío = orden alfabético, igual que la hoja TD.
+  ordenAreas: [],
 
   // Nombre con que se muestra cada área
   nombresArea: { "Cilindrado Volumen": "Cilindrado" },
@@ -368,7 +371,7 @@ async function iniciar() {
       for (const n of nombres) { if (porNombre[norm(n)]) { estado.cols[campo] = porNombre[norm(n)]; break; } }
     }
     const C = estado.cols;
-    const faltan = ["area", "largo", "producto", "unidades", "m3"].filter(k => !C[k]);
+    const faltan = ["area", "largo", "detalle", "unidades", "m3"].filter(k => !C[k]);
     if (!(C.anio && C.mes) && !C.fecha) faltan.push("Año y Mes (o Fecha)");
     if (faltan.length) {
       const hay = cab.cols.map(c => c.label).filter(Boolean).join(", ") || "(sin encabezados)";
@@ -400,7 +403,7 @@ async function cargarPeriodos() {
   $("selAnio").innerHTML = anios.map(a => `<option value="${a}">${a}</option>`).join("");
   const ultimo = estado.periodos.reduce((m, p) => (p.anio * 12 + p.mesNum > m.anio * 12 + m.mesNum ? p : m));
   $("selAnio").value = ultimo.anio;
-  llenarMeses(ultimo.mesNum);
+  llenarMeses(-1); // igual que la hoja TD: todo lo acumulado
   $("selAnio").disabled = $("selMes").disabled = false;
   await cargarMes();
 }
@@ -408,23 +411,24 @@ async function cargarPeriodos() {
 function llenarMeses(elegido) {
   const anio = +$("selAnio").value;
   const meses = estado.periodos.filter(p => p.anio === anio).sort((a, b) => a.mesNum - b.mesNum);
-  $("selMes").innerHTML = meses.map(p => `<option value="${p.mesNum}">${MESES[p.mesNum]}</option>`).join("");
-  if (elegido !== undefined && meses.some(p => p.mesNum === elegido)) $("selMes").value = elegido;
-  else if (meses.length) $("selMes").value = meses[meses.length - 1].mesNum;
+  $("selMes").innerHTML = `<option value="-1">Todo el año</option>`
+    + meses.map(p => `<option value="${p.mesNum}">${MESES[p.mesNum]}</option>`).join("");
+  if (elegido !== undefined && (elegido === -1 || meses.some(p => p.mesNum === elegido))) $("selMes").value = elegido;
+  else $("selMes").value = -1;
 }
 
 async function cargarMes() {
   const C = estado.cols;
   const anio = +$("selAnio").value, mesNum = +$("selMes").value;
   const periodo = estado.periodos.find(p => p.anio === anio && p.mesNum === mesNum);
-  mostrarEstado(`Leyendo ${MESES[mesNum]} ${anio}…`, true);
+  mostrarEstado(`Leyendo ${mesNum < 0 ? "todo " + anio : MESES[mesNum] + " " + anio}…`, true);
   $("btnImprimir").disabled = true;
 
-  const campos = ["area", "maquina", "largo", "producto", "unidades", "m3", "tipo", "rcrd", "dia", "fecha"].filter(k => C[k]);
+  const campos = ["area", "maquina", "largo", "detalle", "unidades", "m3", "tipo", "rcrd", "dia", "fecha"].filter(k => C[k]);
   const ids = [...new Set(campos.map(k => C[k].id))];
   let donde;
-  if (C.anio && C.mes) donde = `${C.anio.id} = ${literal(C.anio, anio)} and ${C.mes.id} = ${literal(C.mes, periodo.mesValor)}`;
-  else donde = `year(${C.fecha.id}) = ${anio} and month(${C.fecha.id}) = ${mesNum}`;
+  if (C.anio && C.mes) donde = `${C.anio.id} = ${literal(C.anio, anio)}` + (mesNum < 0 ? "" : ` and ${C.mes.id} = ${literal(C.mes, periodo.mesValor)}`);
+  else donde = `year(${C.fecha.id}) = ${anio}` + (mesNum < 0 ? "" : ` and month(${C.fecha.id}) = ${mesNum}`);
 
   try {
     const tabla = await consultar(`select ${ids.join(", ")} where ${donde}`);
@@ -436,8 +440,7 @@ async function cargarMes() {
         area: CONFIG.nombresArea[areaOrig] || areaOrig || "(Sin área)",
         maquina: String(g("maquina") ?? "").trim() || "(Sin máquina)",
         largo: g("largo"),
-        // "4 a 5 x 6,0 - RD" y "4 a 5 x 6 - RD" son el mismo producto
-        producto: String(g("producto") ?? "").trim().replace(/ x (\d+),0\b/g, " x $1") || "(Sin producto)",
+        producto: String(g("detalle") ?? "").trim() || "(Sin diámetro)",
         u: numero(g("unidades")),
         m3: numero(g("m3")),
         tipo: String(g("tipo") ?? "").trim() || "(Sin tipo)",
@@ -557,7 +560,7 @@ function dibujar() {
 
   // Área > Largo > Producto
   const arbol = new Map();
-  let fechaMax = null;
+  let fechaMax = null, fechaMin = null;
   filas.forEach(f => {
     if (!f.u && !f.m3) return;
     const kL = claveLargo(f.largo);
@@ -567,19 +570,24 @@ function dibujar() {
     const L = A.get(kL);
     const p = L.get(f.producto) || { u: 0, m3: 0 };
     p.u += f.u; p.m3 += f.m3; L.set(f.producto, p);
-    const fe = f.fecha || (f.dia ? new Date(estado.anio, estado.mesNum, numero(f.dia)) : null);
+    const fe = f.fecha || (f.dia && estado.mesNum >= 0 ? new Date(estado.anio, estado.mesNum, numero(f.dia)) : null);
     if (fe && !isNaN(fe) && (!fechaMax || fe > fechaMax)) fechaMax = fe;
+    if (fe && !isNaN(fe) && (!fechaMin || fe < fechaMin)) fechaMin = fe;
   });
 
   const lista = (set, todos) => !set ? todos : [...set].sort(natural).join(", ");
   const nMaq = $("maqGrupos").querySelectorAll("input").length;
-  const corte = fechaMax ? fechaMax.toLocaleDateString("es-CL", { day: "2-digit", month: "2-digit", year: "numeric" }) : "—";
+  const fmtF = (d) => d.toLocaleDateString("es-CL", { day: "2-digit", month: "2-digit", year: "numeric" });
+  const corte = fechaMax ? fmtF(fechaMax) : "—";
+  const periodoTxt = estado.mesNum < 0
+    ? `Acumulado ${estado.anio}${fechaMin ? ", desde el " + fmtF(fechaMin) : ""}`
+    : `${MESES[estado.mesNum]} ${estado.anio}`;
 
   let html = `
     <div class="encabezado">
       <div>
         <h1>Producción consolidada</h1>
-        <div class="periodo">${MESES[estado.mesNum]} ${estado.anio}</div>
+        <div class="periodo">${periodoTxt}</div>
         <div class="empresa">Forestal Río Claro Limitada</div>
       </div>
       <div class="corte">Datos al<strong>${corte}</strong></div>
@@ -601,7 +609,7 @@ function dibujar() {
   html += `<table class="td">
     <colgroup><col class="c-largo"><col><col class="c-num"><col class="c-num"><col class="c-num"><col class="c-num"></colgroup>
     <thead><tr>
-      <th class="izq">Largo</th><th class="izq">Producto</th>
+      <th class="izq">Largo (m)</th><th class="izq">Diámetro</th>
       <th>Unidades</th><th>% Mix</th><th>M³</th><th>% M³</th>
     </tr></thead>`;
 
@@ -640,7 +648,7 @@ function dibujar() {
 
   html += `<tfoot><tr><td colspan="2" class="izq">Total general</td>
     <td>${fmtU.format(totU)}</td><td></td><td>${fmtM3.format(totM)}</td><td></td></tr></tfoot></table>
-    <div class="pie"><span>% Mix y % M³: participación de cada producto dentro de su largo.</span>
+    <div class="pie"><span>% Mix y % M³: participación de cada diámetro dentro de su largo.</span>
     <span>Generado ${new Date().toLocaleString("es-CL", { dateStyle: "short", timeStyle: "short" })}</span></div>`;
 
   $("hoja").innerHTML = html;
